@@ -4,9 +4,11 @@ use openbrush::{traits::{Balance, String}, storage::Mapping, contracts::psp34::I
 #[derive(Default, Debug)]
 #[openbrush::storage_item]
 pub struct NftData {
+    pub last_token_id: u64,
     pub collection_id: u32,
     pub max_supply: u64,
     pub price_per_mint: Balance, 
+    pub fid_list: Mapping<Id, String>,
     pub sale_list: Mapping<Id, Balance>,
 }
 

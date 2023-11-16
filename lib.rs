@@ -1,16 +1,21 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
-#![no_main]
 
-mod traits;
 mod impls;
+mod traits;
 
-#[openbrush::implementation(PSP34, PSP34Metadata, PSP34Enumerable, Ownable)]
+#[openbrush::implementation(PSP34, PSP34Mintable, PSP34Metadata, PSP34Enumerable, Ownable)]
 #[openbrush::contract]
 mod nft_market {
 
-    use crate::impls::types;
+    use crate::impls;
     use ink::codegen::{EmitEvent, Env};
-    use openbrush::{contracts::{reentrancy_guard, psp34::{PSP34Impl, extensions::metadata}}, traits::Storage};
+    use openbrush::{
+        contracts::{
+            psp34::{extensions::metadata, PSP34Impl},
+            reentrancy_guard,
+        },
+        traits::Storage,
+    };
 
     #[ink(storage)]
     #[derive(Default, Storage)]
@@ -24,7 +29,7 @@ mod nft_market {
         #[storage_field]
         metadata: metadata::Data,
         #[storage_field]
-        nftdata: types::NftData,
+        nftdata: impls::types::NftData,
         #[storage_field]
         enumerable: enumerable::Data,
     }
@@ -52,18 +57,6 @@ mod nft_market {
         approved: bool,
     }
 
-    /// Event emitted when a token trade occurs.
-	#[ink(event)]
-	pub struct Trade {
-		#[ink(topic)]
-		seller: AccountId,
-		#[ink(topic)]
-		buyer: AccountId,
-		#[ink(topic)]
-		id: Id,
-		price: Balance,
-	}
-
     // Override event emission methods
     #[overrider(psp34::Internal)]
     fn _emit_transfer_event(&self, from: Option<AccountId>, to: Option<AccountId>, id: Id) {
@@ -80,6 +73,9 @@ mod nft_market {
         });
     }
 
+    impl impls::market::Internal for NftMarket {}
+    impl impls::market::MarketImpl for NftMarket {}
+
     impl NftMarket {
         #[ink(constructor)]
         pub fn new(
@@ -93,12 +89,27 @@ mod nft_market {
             let caller = instance.env().caller();
             ownable::InternalImpl::_init_with_owner(&mut instance, caller);
             let col_id = PSP34Impl::collection_id(&instance);
-            metadata::InternalImpl::_set_attribute(&mut instance, col_id.clone(), String::from("name"), name);
-            metadata::InternalImpl::_set_attribute(&mut instance, col_id.clone(), String::from("symbol"), symbol);
-            metadata::InternalImpl::_set_attribute(&mut instance, col_id, String::from("baseUri"), base_uri);
+            metadata::InternalImpl::_set_attribute(
+                &mut instance,
+                col_id.clone(),
+                String::from("name"),
+                name,
+            );
+            metadata::InternalImpl::_set_attribute(
+                &mut instance,
+                col_id.clone(),
+                String::from("symbol"),
+                symbol,
+            );
+            metadata::InternalImpl::_set_attribute(
+                &mut instance,
+                col_id,
+                String::from("baseUri"),
+                base_uri,
+            );
             instance.nftdata.max_supply = max_supply;
             instance.nftdata.price_per_mint = price_per_mint;
             instance
-        }
+        }       
     }
 }

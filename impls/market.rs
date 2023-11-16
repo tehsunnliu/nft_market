@@ -1,4 +1,5 @@
-use ink::codegen::EmitEvent;
+use ink::prelude::string::ToString;
+
 use openbrush::{
     contracts::{
         ownable::{self, only_owner},
@@ -17,7 +18,7 @@ use openbrush::{
 use super::types::{NftData, NftError};
 
 #[openbrush::trait_definition]
-pub trait MintImpl:
+pub trait MarketImpl:
     Storage<NftData>
     + Storage<psp34::Data>
     + Storage<reentrancy_guard::Data>
@@ -31,20 +32,29 @@ pub trait MintImpl:
     /// Mint token to
     #[ink(message, payable)]
     #[modifiers(non_reentrant)]
-    fn mint(&mut self, fid: String) -> Result<(), PSP34Error> {
+    fn mint(&mut self, fid: String) -> Result<Id, PSP34Error> {
+        self.check_value(Self::env().transferred_value())?;
         self.check_fid(fid.clone())?;
+
         let caller = Self::env().caller();
-        self._mint_to(caller, Id::Bytes(fid.into_bytes()))?;
-        Ok(())
+        let id = Id::U64(self.data::<NftData>().last_token_id + 1); // first mint id is 1
+        self._mint_to(caller, id.clone())?;
+        self.data::<NftData>().fid_list.insert(&id, &fid);
+        self.data::<NftData>().last_token_id += 1;
+        Ok(id)
     }
 
     /// Mint token to
     #[ink(message, payable)]
     #[modifiers(non_reentrant)]
-    fn mint_to(&mut self, to: AccountId, fid: String) -> Result<(), PSP34Error> {
+    fn mint_to(&mut self, to: AccountId, fid: String) -> Result<Id, PSP34Error> {
         self.check_fid(fid.clone())?;
-        self._mint_to(to, Id::Bytes(fid.into_bytes()))?;
-        Ok(())
+        self.check_value(Self::env().transferred_value())?;
+        let id = Id::U64(self.data::<NftData>().last_token_id + 1); // first mint id is 1
+        self._mint_to(to, id.clone())?;
+        self.data::<NftData>().fid_list.insert(&id, &fid);
+        self.data::<NftData>().last_token_id += 1;
+        Ok(id)
     }
 
     /// Set new value for the baseUri
@@ -58,20 +68,39 @@ pub trait MintImpl:
 
     /// Get URI from token ID
     #[ink(message)]
-    fn token_uri(&self, fid: String) -> Result<String, PSP34Error> {
-        self.token_exists(Id::Bytes(fid.clone().into_bytes()))?;
+    fn token_uri(&self, id: u64) -> Result<String, PSP34Error> {
+        let id = Id::U64(id);
+        self.token_exists(id.clone())?;
         let base_uri = PSP34MetadataImpl::get_attribute(
             self,
             PSP34Impl::collection_id(self),
             String::from("baseUri"),
         );
+        let fid = self
+            .data::<NftData>()
+            .fid_list
+            .get(&id)
+            .ok_or(PSP34Error::TokenNotExists)?;
+
         let token_uri = base_uri.unwrap() + &fid;
         Ok(token_uri)
     }
 
     /// Get token price
     #[ink(message)]
-    fn price(&self) -> Balance {
+    fn price(&self, id: u64) -> Result<Balance, PSP34Error> {
+        let id = Id::U64(id);
+        let price = self
+            .data::<NftData>()
+            .sale_list
+            .get(&id)
+            .ok_or(PSP34Error::Custom(NftError::NotForSale.as_str()));
+        price
+    }
+
+    /// Get price per mint
+    #[ink(message)]
+    fn price_per_mint(&self) -> Balance {
         self.data::<NftData>().price_per_mint
     }
 
@@ -91,17 +120,19 @@ pub trait MintImpl:
 
     /// Lists NFT for Sale
     #[ink(message)]
-    fn list(&mut self, fid: String, price: Balance) -> Result<(), PSP34Error> {
-        let id = Id::Bytes(fid.into_bytes());
+    fn list(&mut self, id: u64, price: Balance) -> Result<(), PSP34Error> {
+        let id = Id::U64(id);
         self.check_owner(id.clone())?;
-        self.data::<NftData>().sale_list.insert(&id, &price);
+        self.data::<NftData>()
+            .sale_list
+            .insert(&id, &(price * 1_000_000_000_000));
         Ok(())
     }
 
     /// Delist NFT from Sale
     #[ink(message)]
-    fn delist(&mut self, fid: String) -> Result<(), PSP34Error> {
-        let id = Id::Bytes(fid.into_bytes());
+    fn delist(&mut self, id: u64) -> Result<(), PSP34Error> {
+        let id = Id::U64(id);
         self.check_owner(id.clone())?;
         if self.data::<NftData>().sale_list.get(&id).is_none() {
             return Err(PSP34Error::Custom(NftError::NotForSale.as_str()));
@@ -112,8 +143,8 @@ pub trait MintImpl:
 
     /// Purchase NFT that is listed for Sale
     #[ink(message, payable)]
-    fn purchase(&mut self, fid: String) -> Result<(), PSP34Error> {
-        let id = Id::Bytes(fid.into_bytes());
+    fn purchase(&mut self, id: u64) -> Result<(), PSP34Error> {
+        let id = Id::U64(id);
         let owner = self._check_token_exists(&id.clone())?;
         let caller = Self::env().caller();
         if owner == caller {
@@ -125,8 +156,16 @@ pub trait MintImpl:
             .sale_list
             .get(&id)
             .ok_or(PSP34Error::Custom(NftError::NotForSale.as_str()))?;
-        if price != Self::env().transferred_value() {
-            return Err(PSP34Error::Custom(NftError::PriceNotMatch.as_str()));
+        let transferred = Self::env().transferred_value();
+
+        if price != transferred {
+            return Err(PSP34Error::Custom(
+                NftError::PriceNotMatch.as_str()
+                    + "Required:"
+                    + &price.to_string()
+                    + ", Supplied:"
+                    + &transferred.to_string(),
+            ));
         }
 
         // Transfer native tokes
@@ -140,18 +179,13 @@ pub trait MintImpl:
 
         // Transfer NFT Token
         self._before_token_transfer(Some(&owner), Some(&caller), &id)?;
-        self._remove_token(&owner, &id)?;
-        self._do_safe_transfer_check(&owner, &owner, &caller, &id, &vec![])?;
-        self._add_token(&caller, &id)?;
+        self._remove_operator_approvals(&owner, &caller, &Some(&id));
+        self._remove_token_owner(&id);
+        self._insert_token_owner(&id, &caller);
         self._after_token_transfer(Some(&owner), Some(&caller), &id)?;
         self._emit_transfer_event(Some(owner), Some(caller), id.clone());
 
-        Self::env().emit_event(Trade {
-            seller: owner,
-            buyer: caller,
-            id,
-            price,
-        });
+        // TODO: Move CESS File metadata from owner to caller
 
         Ok(())
     }
@@ -173,10 +207,16 @@ pub trait Internal: Storage<NftData> + psp34::Internal {
         if transferred_value == self.data::<NftData>().price_per_mint {
             return Ok(());
         }
-        Err(PSP34Error::Custom(NftError::BadMintValue.as_str()))
+        Err(PSP34Error::Custom(
+            NftError::BadMintValue.as_str()
+                + "Required:"
+                + &self.data::<NftData>().price_per_mint.to_string()
+                + ", Supplied:"
+                + &transferred_value.to_string(),
+        ))
     }
 
-    fn check_fid(&self, fid: String) -> Result<(), PSP34Error> {
+    fn check_fid(&self, _fid: String) -> Result<(), PSP34Error> {
         // TODO: Check if fid exists in CESS Chain.
         Ok(())
     }
