@@ -189,6 +189,31 @@ pub trait MarketImpl:
 
         Ok(())
     }
+
+    /// Withdraws funds to contract owner
+    #[ink(message)]
+    #[modifiers(only_owner)]
+    fn withdraw(&mut self) -> Result<(), PSP34Error> {
+        let balance = Self::env().balance();
+        let current_balance = balance
+            .checked_sub(Self::env().minimum_balance())
+            .unwrap_or_default();
+        let owner = self.data::<ownable::Data>().owner.get().unwrap().unwrap();
+        Self::env()
+            .transfer(owner, current_balance)
+            .map_err(|_| PSP34Error::Custom(NftError::WithdrawalFailed.as_str()))?;
+        Ok(())
+    }
+
+    /// Get Contract Balance
+    #[ink(message)]
+    fn balance(&mut self) -> Balance {
+        let balance = Self::env().balance();
+        let current_balance = balance
+            .checked_sub(Self::env().minimum_balance())
+            .unwrap_or_default();
+        current_balance
+    }
 }
 
 pub trait Internal: Storage<NftData> + psp34::Internal {
