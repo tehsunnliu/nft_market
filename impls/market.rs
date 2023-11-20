@@ -33,8 +33,8 @@ pub trait MarketImpl:
     #[ink(message, payable)]
     #[modifiers(non_reentrant)]
     fn mint(&mut self, fid: String) -> Result<Id, PSP34Error> {
-        self.check_value(Self::env().transferred_value())?;
         self.check_fid(fid.clone())?;
+        self.check_value(Self::env().transferred_value())?;
 
         let caller = Self::env().caller();
         let id = Id::U64(self.data::<NftData>().last_token_id + 1); // first mint id is 1
@@ -50,6 +50,7 @@ pub trait MarketImpl:
     fn mint_to(&mut self, to: AccountId, fid: String) -> Result<Id, PSP34Error> {
         self.check_fid(fid.clone())?;
         self.check_value(Self::env().transferred_value())?;
+
         let id = Id::U64(self.data::<NftData>().last_token_id + 1); // first mint id is 1
         self._mint_to(to, id.clone())?;
         self.data::<NftData>().fid_list.insert(&id, &fid);
@@ -229,16 +230,21 @@ pub trait Internal: Storage<NftData> + psp34::Internal {
 
     /// Check if the transferred mint value is as expected
     fn check_value(&self, transferred_value: u128) -> Result<(), PSP34Error> {
-        if transferred_value == self.data::<NftData>().price_per_mint {
-            return Ok(());
+        if transferred_value != self.data::<NftData>().price_per_mint {
+            return Err(PSP34Error::Custom(
+                NftError::BadMintValue.as_str()
+                    + "Required:"
+                    + &self.data::<NftData>().price_per_mint.to_string()
+                    + ", Supplied:"
+                    + &transferred_value.to_string(),
+            ));
         }
-        Err(PSP34Error::Custom(
-            NftError::BadMintValue.as_str()
-                + "Required:"
-                + &self.data::<NftData>().price_per_mint.to_string()
-                + ", Supplied:"
-                + &transferred_value.to_string(),
-        ))
+
+        if self.data::<NftData>().last_token_id >= self.data::<NftData>().max_supply {
+            return Err(PSP34Error::Custom(NftError::CollectionIsFull.as_str()))
+        }
+
+        Ok(())
     }
 
     fn check_fid(&self, _fid: String) -> Result<(), PSP34Error> {

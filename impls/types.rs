@@ -16,9 +16,7 @@ pub struct NftData {
 #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
 pub enum NftError {
     BadMintValue,
-    CannotMintZeroTokens,
     CollectionIsFull,
-    TooManyTokensToMint,
     WithdrawalFailed,
     NotTokenOwner,
     NotForSale,
@@ -31,9 +29,7 @@ impl NftError {
     pub fn as_str(&self) -> String {
         match self {
             NftError::BadMintValue => String::from("BadMintValue"),
-            NftError::CannotMintZeroTokens => String::from("CannotMintZeroTokens"),
             NftError::CollectionIsFull => String::from("CollectionIsFull"),
-            NftError::TooManyTokensToMint => String::from("TooManyTokensToMint"),
             NftError::WithdrawalFailed => String::from("WithdrawalFailed"),
             NftError::NotTokenOwner => String::from("NotTokenOwner"),
             NftError::NotForSale => String::from("NotForSale"),
